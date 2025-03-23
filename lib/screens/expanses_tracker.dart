@@ -1,18 +1,43 @@
 // lib/screens/expense_screen.dart
+import 'package:budgetok/db_helper.dart';
 import 'package:flutter/material.dart';
+import '../db_helper.dart';
+import 'history.dart'; // Ensure this import is correct
 
 class CategoryItem {
+  final int? id;
   final String name;
   final int amount;
   final IconData icon;
   final Color color;
 
   CategoryItem({
+    this.id,
     required this.name,
     required this.amount,
     required this.icon,
     required this.color,
   });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'section': '', // Will be set by the caller
+      'icon': icon.codePoint,
+      'color': color.value,
+    };
+  }
+
+  static CategoryItem fromMap(Map<String, dynamic> map, {int amount = 0}) {
+    return CategoryItem(
+      id: map['id'],
+      name: map['name'],
+      icon: IconData(map['icon'], fontFamily: 'MaterialIcons'),
+      color: Color(map['color']),
+      amount: amount,
+    );
+  }
 }
 
 class ExpenseScreen extends StatefulWidget {
@@ -23,85 +48,143 @@ class ExpenseScreen extends StatefulWidget {
 }
 
 class _ExpenseScreenState extends State<ExpenseScreen> {
-  // Initial category items with just one default icon per section
+  final dbHelper = DatabaseHelper.instance;
+
   Map<String, List<CategoryItem>> sections = {
-    'Income': [
-      CategoryItem(
-        name: 'Salary',
-        amount: 0,
-        icon: Icons.monetization_on,
-        color: Colors.green,
-      ),
-    ],
-    'Accounts': [
-      CategoryItem(
-        name: 'MBANK',
-        amount: 2896,
-        icon: Icons.credit_card,
-        color: Colors.red,
-      ),
-    ],
-    'Expenses': [
-      CategoryItem(
-        name: 'Transport',
-        amount: 1306,
-        icon: Icons.local_taxi,
-        color: Colors.amber,
-      ),
-    ],
+    'Income': [],
+    'Accounts': [],
+    'Expenses': [],
   };
 
-  // Predefined category options for each section
-  final Map<String, List<CategoryItem>> categoryOptions = {
-    'Income': [
-      CategoryItem(
-        name: 'Salary',
-        icon: Icons.monetization_on,
-        color: Colors.green,
-        amount: 0,
-      ),
-      CategoryItem(
-        name: 'Freelance',
-        icon: Icons.work,
-        color: Colors.blue,
-        amount: 0,
-      ),
-    ],
-    'Accounts': [
-      CategoryItem(
-        name: 'MBANK',
-        icon: Icons.credit_card,
-        color: Colors.red,
-        amount: 0,
-      ),
-      CategoryItem(
-        name: 'Cash',
-        icon: Icons.money,
-        color: Colors.green,
-        amount: 0,
-      ),
-    ],
-    'Expenses': [
-      CategoryItem(
-        name: 'Transport',
-        icon: Icons.local_taxi,
-        color: Colors.amber,
-        amount: 0,
-      ),
-      CategoryItem(
-        name: 'Food',
-        icon: Icons.fastfood,
-        color: Colors.orange,
-        amount: 0,
-      ),
-    ],
-  };
+  CategoryItem? _selectedSourceCategory;
+  String? _selectedSourceSection;
 
-  int getTotalAmount(String section) {
-    return sections[section]?.fold(0, (sum, item) => sum! + item.amount) ?? 0;
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
   }
 
-  void _showAddCategoryDialog(String sectionName) {
+  Future<void> _loadCategories() async {
+    sections.forEach((key, value) => value.clear());
+
+    for (String section in sections.keys) {
+      List<Map<String, dynamic>> categoriesMap = await dbHelper.getCategories(
+        section,
+      );
+
+      for (var categoryMap in categoriesMap) {
+        int amount = 0;
+        if (section == 'Accounts') {
+          amount = await dbHelper.getAccountBalance(categoryMap['id']);
+        } else if (section == 'Income' || section == 'Expenses') {
+          // Calculate the total amount for Income and Expenses from the history table
+          amount = await dbHelper.getSectionTotal(section);
+        }
+
+        sections[section]!.add(
+          CategoryItem(
+            id: categoryMap['id'],
+            name: categoryMap['name'],
+            icon: IconData(categoryMap['icon'], fontFamily: 'MaterialIcons'),
+            color: Color(categoryMap['color']),
+            amount: amount,
+          ),
+        );
+      }
+    }
+    setState(() {});
+  }
+
+  Future<int> getSectionTotal(String section) async {
+    if (section == 'Accounts') {
+      return await dbHelper.getSectionTotal(section);
+    } else {
+      // For Income and Expenses, calculate from loaded categories
+      int total = 0;
+      for (var item in sections[section]!) {
+        total += item.amount;
+      }
+      return total;
+    }
+  }
+
+  void _showAddCategoryDialog(String sectionName) async {
+    print('Showing Add Category Dialog for section: $sectionName'); // Debug
+
+    List<Map<String, dynamic>> allCategories = await dbHelper.getCategories(
+      sectionName,
+    );
+
+    print('All Categories: $allCategories'); // Debug
+
+    // Define default icons and colors
+    List<IconData> commonIcons = [
+      Icons.category,
+      Icons.monetization_on,
+      Icons.credit_card,
+      Icons.restaurant,
+      Icons.shopping_cart,
+      Icons.local_taxi,
+      Icons.home,
+      Icons.flight_takeoff,
+      Icons.fitness_center,
+      Icons.medical_services,
+      Icons.school,
+      Icons.movie,
+    ];
+
+    List<Color> commonColors = [
+      Colors.red,
+      Colors.blue,
+      Colors.green,
+      Colors.orange,
+      Colors.purple,
+      Colors.teal,
+      Colors.amber,
+      Colors.indigo,
+      Colors.pink,
+      Colors.deepOrange,
+      Colors.lightBlue,
+      Colors.lightGreen,
+    ];
+
+    // Create a list of available categories (default icons and colors)
+    List<CategoryItem> availableCategories = [];
+
+    for (int i = 0; i < commonIcons.length; i++) {
+      // Check if the icon is already used in the database
+      bool isIconUsed = allCategories.any(
+        (cat) => cat['icon'] == commonIcons[i].codePoint,
+      );
+
+      if (!isIconUsed) {
+        availableCategories.add(
+          CategoryItem(
+            id: null, // New category, no ID yet
+            name: '', // Name will be set by the user
+            amount: 0,
+            icon: commonIcons[i],
+            color: commonColors[i],
+          ),
+        );
+      }
+    }
+
+    print('Available Categories: ${availableCategories.length}'); // Debug
+
+    if (availableCategories.isEmpty) {
+      print('No available categories, showing create dialog'); // Debug
+      _showCreateCategoryDialog(
+        sectionName,
+        Icons.category, // Provide a default icon
+        Colors.grey, // Provide a default color
+      );
+      return;
+    }
+
+    print('Showing Add Category Bottom Sheet'); // Debug
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -117,7 +200,7 @@ class _ExpenseScreenState extends State<ExpenseScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Add New Category',
+                  'Add Category',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -133,15 +216,17 @@ class _ExpenseScreenState extends State<ExpenseScreen> {
                     crossAxisSpacing: 8,
                     mainAxisSpacing: 8,
                   ),
-                  itemCount: categoryOptions[sectionName]!.length,
+                  itemCount: availableCategories.length,
                   itemBuilder: (context, index) {
-                    final category = categoryOptions[sectionName]![index];
+                    final category = availableCategories[index];
                     return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          sections[sectionName]!.add(category);
-                        });
-                        Navigator.pop(context); // Close the modal
+                      onTap: () async {
+                        Navigator.pop(context);
+                        _showCreateCategoryDialog(
+                          sectionName,
+                          category.icon,
+                          category.color,
+                        );
                       },
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -161,7 +246,7 @@ class _ExpenseScreenState extends State<ExpenseScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            category.name,
+                            'New Category',
                             style: TextStyle(fontSize: 12, color: Colors.white),
                           ),
                         ],
@@ -175,61 +260,252 @@ class _ExpenseScreenState extends State<ExpenseScreen> {
     );
   }
 
-  void _showExpenseInputModal(CategoryItem item, String sectionName) {
-    showModalBottomSheet(
+  void _showCreateCategoryDialog(
+    String sectionName,
+    IconData selectedIcon,
+    Color selectedColor,
+  ) {
+    print('Showing Create Category Dialog for section: $sectionName'); // Debug
+
+    final TextEditingController nameController = TextEditingController();
+
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder:
-          (context) => Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          (context) => AlertDialog(
+            backgroundColor: Colors.grey[900],
+            title: Text(
+              'Create New Category',
+              style: TextStyle(color: Colors.white),
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Enter Amount',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    style: TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Category Name',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white54),
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Amount',
-                    hintStyle: TextStyle(color: Colors.grey),
-                    border: OutlineInputBorder(),
+                  SizedBox(height: 20),
+                  Text(
+                    'Selected Icon',
+                    style: TextStyle(color: Colors.white70),
                   ),
-                  keyboardType: TextInputType.number,
-                  style: TextStyle(color: Colors.white),
-                  onSubmitted: (value) {
-                    final amount = int.tryParse(value) ?? 0;
-                    setState(() {
-                      final index = sections[sectionName]!.indexWhere(
-                        (element) =>
-                            element.name == item.name &&
-                            element.color == item.color,
-                      );
-                      if (index != -1) {
-                        final updatedItem = CategoryItem(
-                          name: item.name,
-                          amount: amount,
-                          icon: item.icon,
-                          color: item.color,
-                        );
-                        sections[sectionName]![index] = updatedItem;
-                      }
-                    });
+                  SizedBox(height: 10),
+                  Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: selectedColor,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(selectedIcon, color: Colors.white, size: 24),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                child: Text('Cancel', style: TextStyle(color: Colors.white70)),
+                onPressed: () => Navigator.pop(context),
+              ),
+              TextButton(
+                child: Text('Create', style: TextStyle(color: Colors.blue)),
+                onPressed: () async {
+                  if (nameController.text.trim().isNotEmpty) {
                     Navigator.pop(context);
-                  },
-                ),
-              ],
+
+                    Map<String, dynamic> categoryMap = {
+                      'name': nameController.text.trim(),
+                      'section': sectionName,
+                      'icon': selectedIcon.codePoint,
+                      'color': selectedColor.value,
+                    };
+
+                    print('Inserting category: $categoryMap'); // Debug
+
+                    try {
+                      await dbHelper.insertCategory(categoryMap);
+                      await _loadCategories();
+                    } catch (e) {
+                      print('Error inserting category: $e'); // Debug
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Failed to create category.'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _handleCategorySelection(CategoryItem item, String sectionName) {
+    if (_selectedSourceCategory == null) {
+      setState(() {
+        _selectedSourceCategory = item;
+        _selectedSourceSection = sectionName;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Selected: ${item.name}. Now select destination.'),
+          duration: Duration(seconds: 2),
+          backgroundColor: item.color,
+        ),
+      );
+    } else {
+      if (_selectedSourceCategory?.id == item.id &&
+          _selectedSourceSection == sectionName) {
+        setState(() {
+          _selectedSourceCategory = null;
+          _selectedSourceSection = null;
+        });
+        return;
+      }
+
+      _showTransferDialog(
+        _selectedSourceCategory!,
+        _selectedSourceSection!,
+        item,
+        sectionName,
+      );
+    }
+  }
+
+  void _showTransferDialog(
+    CategoryItem sourceCategory,
+    String sourceSection,
+    CategoryItem targetCategory,
+    String targetSection,
+  ) {
+    // Prevent transfers between the same section unless it's Accounts
+    if (sourceSection == targetSection && sourceSection != 'Accounts') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Cannot transfer between the same section.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Prevent invalid transfers (e.g., Accounts to Income)
+    if (sourceSection == 'Accounts' && targetSection == 'Income') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Cannot transfer from Accounts to Income.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final TextEditingController amountController = TextEditingController();
+    final TextEditingController descriptionController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            backgroundColor: Colors.grey[900],
+            title: Text('Transfer', style: TextStyle(color: Colors.white)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'From: ${sourceCategory.name} (${sourceSection})',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                  Text(
+                    'To: ${targetCategory.name} (${targetSection})',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                  SizedBox(height: 20),
+                  TextField(
+                    controller: amountController,
+                    style: TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Amount',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white54),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: 10),
+                  TextField(
+                    controller: descriptionController,
+                    style: TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Description (optional)',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white54),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                child: Text('Cancel', style: TextStyle(color: Colors.white70)),
+                onPressed: () => Navigator.pop(context),
+              ),
+              TextButton(
+                child: Text('Transfer', style: TextStyle(color: Colors.blue)),
+                onPressed: () async {
+                  if (amountController.text.trim().isNotEmpty) {
+                    try {
+                      int amount = int.parse(amountController.text.trim());
+
+                      await dbHelper.transfer(
+                        fromCategoryId: sourceCategory.id,
+                        toCategoryId: targetCategory.id,
+                        amount: amount,
+                        description: descriptionController.text,
+                      );
+
+                      await _loadCategories();
+
+                      Navigator.pop(context);
+                      setState(() {
+                        _selectedSourceCategory = null;
+                        _selectedSourceSection = null;
+                      });
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Transfer successful!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+              ),
+            ],
           ),
     );
   }
@@ -242,16 +518,10 @@ class _ExpenseScreenState extends State<ExpenseScreen> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              // Income Section
               _buildSection('Income', Icons.arrow_downward),
-
-              // Accounts Section
               _buildSection('Accounts', null),
-
-              // Expenses Section
               _buildSection('Expenses', Icons.menu),
-
-              const SizedBox(height: 80), // Space for bottom navigation
+              const SizedBox(height: 80),
             ],
           ),
         ),
@@ -261,44 +531,54 @@ class _ExpenseScreenState extends State<ExpenseScreen> {
   }
 
   Widget _buildSection(String title, IconData? actionIcon) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
+    return FutureBuilder<int>(
+      future: getSectionTotal(title),
+      builder: (context, snapshot) {
+        int total = snapshot.data ?? 0;
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
                 ),
-                Row(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    if (actionIcon != null)
-                      Icon(actionIcon, color: Colors.grey),
-                    const SizedBox(width: 8),
                     Text(
-                      'COM ${getTotalAmount(title).toString()}',
+                      title,
                       style: const TextStyle(
-                        fontSize: 16,
+                        fontSize: 22,
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
                       ),
                     ),
+                    Row(
+                      children: [
+                        if (actionIcon != null)
+                          Icon(actionIcon, color: Colors.grey),
+                        const SizedBox(width: 8),
+                        Text(
+                          'COM $total',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              _buildCategoryGrid(title),
+            ],
           ),
-          _buildCategoryGrid(title),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -315,88 +595,54 @@ class _ExpenseScreenState extends State<ExpenseScreen> {
         crossAxisSpacing: 8,
         mainAxisSpacing: 16,
       ),
-      itemCount: items.length + 1, // +1 for the "add" button
+      itemCount: items.length + 1,
       itemBuilder: (context, index) {
         if (index == items.length) {
-          // Last item - "Add" button
           return _buildAddButton(sectionTitle);
         }
-        return _buildDraggableCategoryItem(items[index], sectionTitle);
+        return _buildCategoryItem(items[index], sectionTitle);
       },
     );
   }
 
-  Widget _buildDraggableCategoryItem(CategoryItem item, String sourceSection) {
-    return LongPressDraggable<Map<String, dynamic>>(
-      data: {'item': item, 'sourceSection': sourceSection},
-      feedback: Material(
-        color: Colors.transparent,
-        child: Container(
-          width: 60,
-          height: 60,
-          decoration: BoxDecoration(color: item.color, shape: BoxShape.circle),
-          child: Icon(item.icon, color: Colors.white, size: 24),
-        ),
-      ),
-      childWhenDragging: Opacity(
-        opacity: 0.5,
-        child: _buildCategoryItemContent(item),
-      ),
-      child: GestureDetector(
-        onTap: () => _showExpenseInputModal(item, sourceSection),
-        child: DragTarget<Map<String, dynamic>>(
-          onAccept: (data) {
-            CategoryItem draggedItem = data['item'];
-            String sourceSectionName = data['sourceSection'];
+  Widget _buildCategoryItem(CategoryItem item, String sectionTitle) {
+    final isSelected =
+        _selectedSourceCategory?.id == item.id &&
+        _selectedSourceSection == sectionTitle;
 
-            if (sourceSection != sourceSectionName) {
-              setState(() {
-                // Remove from source section
-                sections[sourceSectionName]?.removeWhere(
-                  (element) =>
-                      element.name == draggedItem.name &&
-                      element.amount == draggedItem.amount,
-                );
-
-                // Add to target section (current category's section)
-                sections[sourceSection]?.add(draggedItem);
-              });
-            }
-          },
-          builder: (context, candidateData, rejectedData) {
-            return _buildCategoryItemContent(item);
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCategoryItemContent(CategoryItem item) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 50,
-          height: 50,
-          decoration: BoxDecoration(color: item.color, shape: BoxShape.circle),
-          child: Icon(item.icon, color: Colors.white, size: 22),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          item.name,
-          textAlign: TextAlign.center,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 10, color: Colors.white),
-        ),
-        Text(
-          'com ${item.amount}',
-          style: const TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
+    return GestureDetector(
+      onTap: () => _handleCategorySelection(item, sectionTitle),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              color: item.color,
+              shape: BoxShape.circle,
+              border:
+                  isSelected ? Border.all(color: Colors.white, width: 2) : null,
+            ),
+            child: Icon(item.icon, color: Colors.white, size: 22),
           ),
-        ),
-      ],
+          const SizedBox(height: 2),
+          Text(
+            item.name,
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 10, color: Colors.white),
+          ),
+          Text(
+            'com ${item.amount}',
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -441,31 +687,49 @@ class _ExpenseScreenState extends State<ExpenseScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildNavItem(0, 'Dashboard', Icons.dashboard),
-          _buildNavItem(1, 'History', Icons.history),
-          _buildNavItem(2, 'Chart', Icons.pie_chart),
-          _buildNavItem(3, 'Report', Icons.insert_chart),
-          _buildNavItem(4, 'Settings', Icons.settings),
+          _buildNavItem(0, 'Dashboard', Icons.dashboard, true),
+          _buildNavItem(
+            1,
+            'History',
+            Icons.history,
+            false,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => HistoryScreen()),
+              );
+            },
+          ),
+          _buildNavItem(2, 'Chart', Icons.pie_chart, false),
+          _buildNavItem(3, 'Report', Icons.insert_chart, false),
+          _buildNavItem(4, 'Settings', Icons.settings, false),
         ],
       ),
     );
   }
 
-  Widget _buildNavItem(int index, String label, IconData icon) {
-    final bool isSelected = index == 0; // Assume dashboard is selected
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(icon, color: isSelected ? Colors.blue : Colors.grey, size: 22),
-        Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? Colors.blue : Colors.grey,
-            fontSize: 10,
+  Widget _buildNavItem(
+    int index,
+    String label,
+    IconData icon,
+    bool isSelected, {
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: isSelected ? Colors.blue : Colors.grey, size: 22),
+          Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.blue : Colors.grey,
+              fontSize: 10,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

@@ -1,9 +1,9 @@
 // lib/widgets/expense_input_modal.dart
 import 'package:flutter/material.dart';
-import '../models/category_item.dart';
+import '../models/category.dart';
 
 class ExpenseInputModal extends StatefulWidget {
-  final CategoryItem categoryItem;
+  final CategoryModel categoryItem;
   final Function(int) onSave;
 
   const ExpenseInputModal({
